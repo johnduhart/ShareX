@@ -31,9 +31,11 @@ using System;
 using System.Diagnostics;
 using System.IO;
 using System.Reflection;
+using System.Security.Cryptography.X509Certificates;
 using System.Text;
 using System.Threading;
 using System.Windows.Forms;
+using Autofac;
 
 namespace ShareX
 {
@@ -73,175 +75,102 @@ namespace ShareX
         public static HotkeyManager HotkeyManager { get; set; }
         public static WatchFolderManager WatchFolderManager { get; set; }
 
+        public static ILifetimeScope Container { get; private set; }
+
+        private static IApplicationPaths applicationPaths;
+
         #region Paths
 
-        public static readonly string StartupPath = Application.StartupPath;
-
-        public static readonly string DefaultPersonalPath = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments), "ShareX");
-        private static readonly string PortablePersonalPath = Path.Combine(StartupPath, "ShareX");
-        private static readonly string PersonalPathConfig = Path.Combine(StartupPath, "PersonalPath.cfg");
-        private static readonly string ApplicationConfigFilename = "ApplicationConfig.json";
-        private static readonly string UploadersConfigFilename = "UploadersConfig.json";
-        private static readonly string HotkeysConfigFilename = "HotkeysConfig.json";
-        private static readonly string HistoryFilename = "History.xml";
-        private static readonly string LogFileName = "ShareX-Log-{0:yyyy-MM}.txt";
-
-        public static string CustomPersonalPath { get; private set; }
+        [Obsolete("Use IApplicationPaths")]        
+        public static string DefaultPersonalPath 
+        { 
+            get
+            {
+                return applicationPaths.DefaultPersonalPath;
+            }
+        }
 
         private static FileSystemWatcher uploaderConfigWatcher;
         private static WatchFolderDuplicateEventTimer uploaderConfigWatcherTimer;
 
+        [Obsolete("Use IApplicationPaths")]
         public static string PersonalPath
         {
             get
             {
-                if (!string.IsNullOrEmpty(CustomPersonalPath))
-                {
-                    return CustomPersonalPath;
-                }
-
-                return DefaultPersonalPath;
+                return applicationPaths.PersonalPath;
             }
         }
 
+        [Obsolete("Use IApplicationPaths")]
         public static string ApplicationConfigFilePath
         {
             get
             {
-                if (!IsSandbox)
-                {
-                    return Path.Combine(PersonalPath, ApplicationConfigFilename);
-                }
-
-                return null;
+                return applicationPaths.ApplicationConfigFilePath;
             }
         }
 
-        private static string UploadersConfigFolder
-        {
-            get
-            {
-                if (Settings != null && !string.IsNullOrEmpty(Settings.CustomUploadersConfigPath))
-                {
-                    return Settings.CustomUploadersConfigPath;
-                }
-
-                return PersonalPath;
-            }
-        }
-
-        public static string UploadersConfigFilePath
-        {
-            get
-            {
-                if (!IsSandbox)
-                {
-                    return Path.Combine(UploadersConfigFolder, UploadersConfigFilename);
-                }
-
-                return null;
-            }
-        }
-
-        private static string HotkeysConfigFolder
-        {
-            get
-            {
-                if (Settings != null && !string.IsNullOrEmpty(Settings.CustomHotkeysConfigPath))
-                {
-                    return Settings.CustomHotkeysConfigPath;
-                }
-
-                return PersonalPath;
-            }
-        }
-
+        [Obsolete("Use IApplicationPaths")]
         public static string HotkeysConfigFilePath
         {
             get
             {
-                if (!IsSandbox)
-                {
-                    return Path.Combine(HotkeysConfigFolder, HotkeysConfigFilename);
-                }
-
-                return null;
+                return applicationPaths.HotkeysConfigFilePath;
             }
         }
 
+        [Obsolete("Use IApplicationPaths")]
         public static string HistoryFilePath
         {
             get
             {
-                if (!IsSandbox)
-                {
-                    return Path.Combine(PersonalPath, HistoryFilename);
-                }
-
-                return null;
+                return applicationPaths.HistoryFilePath;
             }
         }
 
-        private static string LogsFolder
-        {
-            get
-            {
-                return Path.Combine(PersonalPath, "Logs");
-            }
-        }
-
+        [Obsolete("Use IApplicationPaths")]
         public static string LogsFilePath
         {
             get
             {
-                string filename = string.Format(LogFileName, FastDateTime.Now);
-                return Path.Combine(LogsFolder, filename);
+                return applicationPaths.LogsFilePath;
             }
         }
 
+        [Obsolete("Use IApplicationPaths")]
         public static string ScreenshotsParentFolder
         {
             get
             {
-                if (Settings != null && Settings.UseCustomScreenshotsPath && !string.IsNullOrEmpty(Settings.CustomScreenshotsPath))
-                {
-                    return Settings.CustomScreenshotsPath;
-                }
-
-                return Path.Combine(PersonalPath, "Screenshots");
+                return applicationPaths.ScreenshotsParentFolder;
             }
         }
 
+        [Obsolete("Use IApplicationPaths")]
         public static string ScreenshotsFolder
         {
             get
             {
-                string subFolderName = NameParser.Parse(NameParserType.FolderPath, Settings.SaveImageSubFolderPattern);
-                return Path.Combine(ScreenshotsParentFolder, subFolderName);
+                return applicationPaths.ScreenshotsFolder;
             }
         }
 
+        [Obsolete("Use IApplicationPaths")]
         public static string ScreenRecorderCacheFilePath
         {
             get
             {
-                return Path.Combine(PersonalPath, "ScreenRecorder.avi");
+                return applicationPaths.ScreenRecorderCacheFilePath;
             }
         }
 
-        private static string BackupFolder
-        {
-            get
-            {
-                return Path.Combine(PersonalPath, "Backup");
-            }
-        }
-
+        [Obsolete("Use IApplicationPaths")]
         public static string ToolsFolder
         {
             get
             {
-                return Path.Combine(PersonalPath, "Tools");
+                return applicationPaths.ToolsFolder;
             }
         }
 
@@ -283,6 +212,9 @@ namespace ShareX
             Application.EnableVisualStyles();
             Application.SetCompatibleTextRenderingDefault(false);
 
+            Container = BuildContainer();
+            applicationPaths = Container.Resolve<IApplicationPaths>();
+
             IsSilentRun = CLI.IsCommandExist("silent", "s");
             IsSandbox = CLI.IsCommandExist("sandbox");
 
@@ -292,24 +224,24 @@ namespace ShareX
 
                 if (IsPortable)
                 {
-                    CustomPersonalPath = PortablePersonalPath;
+                    applicationPaths.CustomPersonalPath = applicationPaths.PortablePersonalPath;
                 }
                 else
                 {
                     CheckPersonalPathConfig();
                 }
 
-                if (!Directory.Exists(PersonalPath))
+                if (!Directory.Exists(applicationPaths.CustomPersonalPath))
                 {
                     try
                     {
-                        Directory.CreateDirectory(PersonalPath);
+                        Directory.CreateDirectory(applicationPaths.CustomPersonalPath);
                     }
                     catch (Exception e)
                     {
-                        MessageBox.Show(Resources.Program_Run_Unable_to_create_folder_ + string.Format(" \"{0}\"\r\n\r\n{1}", PersonalPath, e),
+                        MessageBox.Show(Resources.Program_Run_Unable_to_create_folder_ + string.Format(" \"{0}\"\r\n\r\n{1}", applicationPaths.PersonalPath, e),
                             "ShareX - " + Resources.Program_Run_Error, MessageBoxButtons.OK, MessageBoxIcon.Error);
-                        CustomPersonalPath = "";
+                        applicationPaths.CustomPersonalPath = "";
                     }
                 }
             }
@@ -317,7 +249,7 @@ namespace ShareX
             DebugHelper.WriteLine("{0} started", Title);
             DebugHelper.WriteLine("Operating system: " + Environment.OSVersion.VersionString);
             DebugHelper.WriteLine("Command line: " + Environment.CommandLine);
-            DebugHelper.WriteLine("Personal path: " + PersonalPath);
+            DebugHelper.WriteLine("Personal path: " + applicationPaths.PersonalPath);
 
             string gitHash = GetGitHash();
             if (!string.IsNullOrEmpty(gitHash))
@@ -334,7 +266,7 @@ namespace ShareX
             LanguageHelper.ChangeLanguage(Settings.Language);
 
             DebugHelper.WriteLine("MainForm init started");
-            MainForm = new MainForm();
+            MainForm = Container.Resolve<MainForm>();
             DebugHelper.WriteLine("MainForm init finished");
 
             Application.Run(MainForm);
@@ -345,6 +277,17 @@ namespace ShareX
 
             DebugHelper.WriteLine("ShareX closing");
             DebugHelper.Logger.SaveLog(LogsFilePath);
+        }
+
+        private static IContainer BuildContainer()
+        {
+            var builder = new ContainerBuilder();
+
+            builder.RegisterType<ApplicationPaths>().As<IApplicationPaths>().SingleInstance();
+
+            builder.RegisterType<MainForm>().AsSelf().SingleInstance();
+
+            return builder.Build();
         }
 
         public static void Restart()
@@ -410,33 +353,33 @@ namespace ShareX
 
         public static void LoadProgramSettings()
         {
-            Settings = ApplicationConfig.Load(ApplicationConfigFilePath);
+            Settings = ApplicationConfig.Load(applicationPaths.ApplicationConfigFilePath);
             DefaultTaskSettings = Settings.DefaultTaskSettings;
         }
 
         public static void LoadUploadersConfig()
         {
-            UploadersConfig = UploadersConfig.Load(UploadersConfigFilePath);
+            UploadersConfig = UploadersConfig.Load(applicationPaths.UploadersConfigFilePath);
         }
 
         public static void LoadHotkeySettings()
         {
-            HotkeysConfig = HotkeysConfig.Load(HotkeysConfigFilePath);
+            HotkeysConfig = HotkeysConfig.Load(applicationPaths.HotkeysConfigFilePath);
         }
 
         public static void SaveSettings()
         {
-            if (Settings != null) Settings.Save(ApplicationConfigFilePath);
-            if (UploadersConfig != null) UploadersConfig.Save(UploadersConfigFilePath);
-            if (HotkeysConfig != null) HotkeysConfig.Save(HotkeysConfigFilePath);
+            if (Settings != null) Settings.Save(applicationPaths.ApplicationConfigFilePath);
+            if (UploadersConfig != null) UploadersConfig.Save(applicationPaths.UploadersConfigFilePath);
+            if (HotkeysConfig != null) HotkeysConfig.Save(applicationPaths.HotkeysConfigFilePath);
         }
 
         public static void BackupSettings()
         {
-            Helpers.BackupFileWeekly(ApplicationConfigFilePath, BackupFolder);
-            Helpers.BackupFileWeekly(HotkeysConfigFilePath, BackupFolder);
-            Helpers.BackupFileWeekly(UploadersConfigFilePath, BackupFolder);
-            Helpers.BackupFileWeekly(HistoryFilePath, BackupFolder);
+            Helpers.BackupFileWeekly(applicationPaths.ApplicationConfigFilePath, applicationPaths.BackupFolder);
+            Helpers.BackupFileWeekly(applicationPaths.HotkeysConfigFilePath, applicationPaths.BackupFolder);
+            Helpers.BackupFileWeekly(applicationPaths.UploadersConfigFilePath, applicationPaths.BackupFolder);
+            Helpers.BackupFileWeekly(applicationPaths.HistoryFilePath, applicationPaths.BackupFolder);
         }
 
         private static void CheckPersonalPathConfig()
@@ -445,9 +388,9 @@ namespace ShareX
 
             if (!string.IsNullOrEmpty(customPersonalPath))
             {
-                CustomPersonalPath = Helpers.GetAbsolutePath(customPersonalPath);
+                applicationPaths.CustomPersonalPath = Helpers.GetAbsolutePath(customPersonalPath);
 
-                if (CustomPersonalPath.Equals(PortablePersonalPath, StringComparison.InvariantCultureIgnoreCase))
+                if (applicationPaths.CustomPersonalPath.Equals(applicationPaths.PortablePersonalPath, StringComparison.InvariantCultureIgnoreCase))
                 {
                     IsPortable = true;
                 }
@@ -456,9 +399,9 @@ namespace ShareX
 
         public static string ReadPersonalPathConfig()
         {
-            if (File.Exists(PersonalPathConfig))
+            if (File.Exists(applicationPaths.PersonalPathConfig))
             {
-                return File.ReadAllText(PersonalPathConfig, Encoding.UTF8).Trim();
+                return File.ReadAllText(applicationPaths.PersonalPathConfig, Encoding.UTF8).Trim();
             }
 
             return string.Empty;
@@ -475,7 +418,7 @@ namespace ShareX
                 path = path.Trim();
             }
 
-            bool isDefaultPath = string.IsNullOrEmpty(path) && !File.Exists(PersonalPathConfig);
+            bool isDefaultPath = string.IsNullOrEmpty(path) && !File.Exists(applicationPaths.PersonalPathConfig);
 
             if (!isDefaultPath)
             {
@@ -485,11 +428,11 @@ namespace ShareX
                 {
                     try
                     {
-                        File.WriteAllText(PersonalPathConfig, path, Encoding.UTF8);
+                        File.WriteAllText(applicationPaths.PersonalPathConfig, path, Encoding.UTF8);
                     }
                     catch (UnauthorizedAccessException)
                     {
-                        MessageBox.Show(string.Format(Resources.Program_WritePersonalPathConfig_Cant_access_to_file, PersonalPathConfig),
+                        MessageBox.Show(string.Format(Resources.Program_WritePersonalPathConfig_Cant_access_to_file, applicationPaths.PersonalPathConfig),
                             "ShareX", MessageBoxButtons.OK, MessageBoxIcon.Warning);
                     }
                 }
@@ -518,9 +461,9 @@ namespace ShareX
         {
             if (Settings.DetectUploaderConfigFileChanges && uploaderConfigWatcher == null)
             {
-                uploaderConfigWatcher = new FileSystemWatcher(Path.GetDirectoryName(UploadersConfigFilePath), Path.GetFileName(UploadersConfigFilePath));
+                uploaderConfigWatcher = new FileSystemWatcher(Path.GetDirectoryName(applicationPaths.UploadersConfigFilePath), Path.GetFileName(applicationPaths.UploadersConfigFilePath));
                 uploaderConfigWatcher.Changed += uploaderConfigWatcher_Changed;
-                uploaderConfigWatcherTimer = new WatchFolderDuplicateEventTimer(UploadersConfigFilePath);
+                uploaderConfigWatcherTimer = new WatchFolderDuplicateEventTimer(applicationPaths.UploadersConfigFilePath);
                 uploaderConfigWatcher.EnableRaisingEvents = true;
             }
             else if (uploaderConfigWatcher != null)
@@ -551,7 +494,7 @@ namespace ShareX
 
             TaskEx.Run(() =>
             {
-                UploadersConfig.Save(UploadersConfigFilePath);
+                UploadersConfig.Save(applicationPaths.UploadersConfigFilePath);
             },
             () =>
             {
